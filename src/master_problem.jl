@@ -1,14 +1,16 @@
-
 function benders_optimize!(m::Model, y::Vector{VariableRef}, sd::SubProblemData, sp_optimizer, f::Union{Function,Type}; eta_bound::Real = -1000.0)
     subproblem = Model(sp_optimizer)
+    # subproblem = direct_model(sp_optimizer)
+    # set_optimizer_attribute(subproblem, "InfUnbdInfo", 1)
     dsp = DualSubProblem(sd, subproblem)
+    # set_optimizer_attribute(dsp.m, "InfUnbdInfo", 1)
     @variable(m, η >= eta_bound)
     @objective(m, Min, f(y) + η)
     optimize!(m)
     st = MOI.get(m, MOI.TerminationStatus())
     # restricted master has a solution or is unbounded
     nopt_cons, nfeas_cons = (0, 0)
-    @info "Initial status $st"
+    # @info "Initial status $st"
     cuts = Tuple{Symbol, Vector{Float64}}[]
     while (st == MOI.DUAL_INFEASIBLE) || (st == MOI.OPTIMAL)
         optimize!(m)
@@ -17,17 +19,17 @@ function benders_optimize!(m::Model, y::Vector{VariableRef}, sd::SubProblemData,
         η0 = JuMP.value(η)
         (res, α) = optimize!(dsp, ŷ)
         if res == :OptimalityCut
-            @info "Optimality cut found"
-            if η0 ≥ α' * (dsp.data.b - dsp.data.D * ŷ)
+            if η0 - α' * (dsp.data.b - dsp.data.D * ŷ) >= - 1e-10
                 break
             else
                 nopt_cons += 1
-                @constraint(m, η ≥ α' * (dsp.data.b - dsp.data.D * y))
+                cut = @constraint(m, η ≥ α' * (dsp.data.b - dsp.data.D * y))
             end
+            # @info "Optimality cut found $cut"
         else
-            @info "Feasibility cut found"
             nfeas_cons += 1
-            @constraint(m, 0 ≥ α' * (dsp.data.b - dsp.data.D * y))
+            cut = @constraint(m, 0 ≥ α' * (dsp.data.b - dsp.data.D * y))
+            # @info "Feasibility cut found $cut"
         end
         push!(cuts, (res, α))
     end
